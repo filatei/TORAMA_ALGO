@@ -1,13 +1,14 @@
 //+------------------------------------------------------------------+
-//|                                     GapTrader Pro EA v16.3      |
+//|                                     GapTrader Pro EA v16.4      |
 //|                 Momentum-Only Strategy (Dollar-Based Calculations)|
 //|              Buy Up Momentum | Sell Down Momentum              |
 //|              SEPARATE MAX BUY & MAX SELL POSITIONS              |
 //|              REBUILD ON TP/SL CLOSE (OPTIONAL)                  |
+//|              REBUILD AFTER 3 CONSECUTIVE TP/SL                  |
 //|              SPREAD FILTER PROTECTION                           |
 //+------------------------------------------------------------------+
-#property copyright "GapTrader Pro v16.3 - © Torama Capital"
-#property version   "16.03"
+#property copyright "GapTrader Pro v16.4 - © Torama Capital"
+#property version   "16.04"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -44,6 +45,7 @@ input bool EnableAutoRebuild = true;
 input int RebuildIntervalMinutes = 30;
 input int MaxRebuilds = 10;
 input bool RebuildOnTPSL = true;              // Rebuild after TP/SL closes
+input bool RebuildAfter3TPSL = true;          // Rebuild after 3 consecutive TP/SL closes
 
 input group "=== Panel Settings ==="
 input int PanelX = 20;
@@ -66,6 +68,8 @@ struct TradeInfo {
    bool isActive, isPaused;
    int autoRebuilds;
    int tpslRebuilds;  // Counter for TP/SL rebuilds
+   int consecutiveTPSL;  // NEW: Counter for consecutive TP/SL closes
+   int rebuildsFrom3TPSL;  // NEW: Counter for rebuilds triggered by 3 TP/SL
    int spreadBlockCount;  // Counter for trades blocked by spread
 };
 
@@ -79,7 +83,7 @@ bool brandingCreated = false;
 double savedData[8];
 datetime savedTimes[3];
 bool savedBools[3];
-int savedInts[8];
+int savedInts[10];  // Increased array size for new counters
 
 //+------------------------------------------------------------------+
 //| Utility Functions                                                |
@@ -199,6 +203,8 @@ void InitFreshState() {
    ti.isActive = true;
    ti.isPaused = false;
    ti.startTime = TimeCurrent();
+   ti.consecutiveTPSL = 0;  // NEW: Initialize consecutive counter
+   ti.rebuildsFrom3TPSL = 0;  // NEW: Initialize 3-TPSL rebuild counter
    
    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    ti.centerPrice = currentPrice;
@@ -232,6 +238,8 @@ void SaveState() {
    savedInts[4] = ti.lastKnownBuyPositions;
    savedInts[5] = ti.lastKnownSellPositions;
    savedInts[6] = ti.spreadBlockCount;
+   savedInts[7] = ti.consecutiveTPSL;  // NEW: Save consecutive counter
+   savedInts[8] = ti.rebuildsFrom3TPSL;  // NEW: Save 3-TPSL rebuild counter
 }
 
 void RestoreState() {
@@ -252,6 +260,8 @@ void RestoreState() {
    ti.lastKnownBuyPositions = savedInts[4];
    ti.lastKnownSellPositions = savedInts[5];
    ti.spreadBlockCount = savedInts[6];
+   ti.consecutiveTPSL = savedInts[7];  // NEW: Restore consecutive counter
+   ti.rebuildsFrom3TPSL = savedInts[8];  // NEW: Restore 3-TPSL rebuild counter
 }
 
 void ClearState() {
@@ -263,7 +273,7 @@ void ClearState() {
 
 void PrintStrategyInfo() {
    Print("===================================================================");
-   Print("GapTrader Pro EA v16.3 - Momentum Strategy - © Torama Capital");
+   Print("GapTrader Pro EA v16.4 - Momentum Strategy - © Torama Capital");
    Print("Email: ea@torama.biz | Web: money.torama.biz");
    Print("===================================================================");
    Print("MOMENTUM STRATEGY:");
@@ -279,6 +289,7 @@ void PrintStrategyInfo() {
    Print("Current Lot Size: ", DoubleToString(GetLotSize(), 2));
    Print("Auto Rebuild: ", EnableAutoRebuild ? "ENABLED" : "DISABLED");
    Print("Rebuild on TP/SL: ", RebuildOnTPSL ? "ENABLED" : "DISABLED");
+   Print("Rebuild after 3 TP/SL: ", RebuildAfter3TPSL ? "ENABLED" : "DISABLED");  // NEW
    Print("Spread Filter: ", EnableSpreadFilter ? "ENABLED (Max: " + IntegerToString(MaxSpreadPoints) + " points)" : "DISABLED");
    Print("===================================================================");
 }
@@ -439,9 +450,19 @@ void CheckTPSLCloses() {
       }
       
       ti.tpslRebuilds++;
-      RebuildGrid("TP/SL Close (" + closedType + ") #" + IntegerToString(ti.tpslRebuilds));
+      ti.consecutiveTPSL++;  // NEW: Increment consecutive TP/SL counter
       
-      Print(">>> TP/SL DETECTED: ", closedType, " position(s) closed | Rebuilding grid");
+      Print(">>> TP/SL DETECTED: ", closedType, " position(s) closed | Consecutive TP/SL: ", ti.consecutiveTPSL, "/3");
+      
+      // NEW: Check if we've hit 3 consecutive TP/SL closes
+      if(RebuildAfter3TPSL && ti.consecutiveTPSL >= 3) {
+         ti.rebuildsFrom3TPSL++;
+         ti.consecutiveTPSL = 0;  // Reset counter after rebuild
+         RebuildGrid("3 Consecutive TP/SL #" + IntegerToString(ti.rebuildsFrom3TPSL));
+         Print(">>> 3 CONSECUTIVE TP/SL REBUILD TRIGGERED! Total: ", ti.rebuildsFrom3TPSL);
+      } else {
+         RebuildGrid("TP/SL Close (" + closedType + ") #" + IntegerToString(ti.tpslRebuilds));
+      }
    }
    
    // Update tracking
@@ -538,6 +559,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    }
    else if(sparam == "GT_RebuildBtn") {
       RebuildGrid("Manual");
+      ti.consecutiveTPSL = 0;  // NEW: Reset consecutive counter on manual rebuild
    }
    else if(sparam == "GT_PauseResumeBtn") {
       ti.isPaused = !ti.isPaused;
@@ -546,6 +568,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          Print("*** MOMENTUM EA PAUSED ***");
       } else {
          RebuildGrid("Resume");
+         ti.consecutiveTPSL = 0;  // NEW: Reset consecutive counter on resume
          if(EnableAutoRebuild && ti.autoRebuilds < MaxRebuilds) {
             ti.nextAutoRebuild = TimeCurrent() + (RebuildIntervalMinutes * 60);
          }
@@ -601,14 +624,14 @@ bool CreatePanel() {
    ObjectSetInteger(0, "GT_Panel", OBJPROP_XDISTANCE, PanelX);
    ObjectSetInteger(0, "GT_Panel", OBJPROP_YDISTANCE, PanelY);
    ObjectSetInteger(0, "GT_Panel", OBJPROP_XSIZE, 400);
-   ObjectSetInteger(0, "GT_Panel", OBJPROP_YSIZE, 395);
+   ObjectSetInteger(0, "GT_Panel", OBJPROP_YSIZE, 420);  // Increased height for new display
    ObjectSetInteger(0, "GT_Panel", OBJPROP_BGCOLOR, C'248,248,248');
    ObjectSetInteger(0, "GT_Panel", OBJPROP_BORDER_COLOR, C'70,70,70');
    ObjectSetInteger(0, "GT_Panel", OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, "GT_Panel", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, "GT_Panel", OBJPROP_HIDDEN, true);
    
-   CreateLabel("GT_Title", "GapTrader Pro v16.3 - Momentum Strategy", 10, 8, 11, clrNavy);
+   CreateLabel("GT_Title", "GapTrader Pro v16.4 - Momentum Strategy", 10, 8, 11, clrNavy);
    CreateButton("GT_CloseProfitsBtn", "CLOSE PROFITS", 10, 30, 100, 25, clrGreen);
    CreateButton("GT_RebuildBtn", "REBUILD GRID", 120, 30, 100, 25, clrBlue);
    CreateButton("GT_PauseResumeBtn", "PAUSE", 230, 30, 80, 25, clrPurple);
@@ -617,7 +640,7 @@ bool CreatePanel() {
       "GT_Status", "GT_Direction", "GT_TotalPL", "GT_Positions", "GT_MaxPositions",
       "GT_MomentumLevels", "GT_NetAllPositions", "GT_CurrentPrice", "GT_GapSize", 
       "GT_NextTriggers", "GT_Spread", "GT_SpreadFilter", "GT_AutoRebuild", 
-      "GT_TPSLRebuild", "GT_NextRebuild", "GT_DebugInfo"
+      "GT_TPSLRebuild", "GT_ConsecutiveTPSL", "GT_3TPSLRebuilds", "GT_NextRebuild", "GT_DebugInfo"
    };
    
    int yPos = 70;
@@ -668,7 +691,7 @@ void SetPanelVisibility(bool visible) {
       "GT_Status", "GT_Direction", "GT_TotalPL", "GT_Positions", "GT_MaxPositions",
       "GT_MomentumLevels", "GT_NetAllPositions", "GT_CurrentPrice", "GT_GapSize", 
       "GT_NextTriggers", "GT_Spread", "GT_SpreadFilter", "GT_AutoRebuild", 
-      "GT_TPSLRebuild", "GT_NextRebuild", "GT_DebugInfo"
+      "GT_TPSLRebuild", "GT_ConsecutiveTPSL", "GT_3TPSLRebuilds", "GT_NextRebuild", "GT_DebugInfo"
    };
    
    for(int i = 0; i < ArraySize(objects); i++) {
@@ -775,6 +798,28 @@ void UpdatePanel() {
    ObjectSetString(0, "GT_TPSLRebuild", OBJPROP_TEXT, tpslRebuildText);
    color tpslColor = RebuildOnTPSL ? clrBlue : clrGray;
    ObjectSetInteger(0, "GT_TPSLRebuild", OBJPROP_COLOR, tpslColor);
+   
+   // NEW: Consecutive TP/SL counter display
+   string consecutiveText = "Consecutive TP/SL: " + IntegerToString(ti.consecutiveTPSL) + "/3";
+   color consecutiveColor = clrBlack;
+   if(RebuildAfter3TPSL) {
+      if(ti.consecutiveTPSL >= 2) {
+         consecutiveColor = clrOrangeRed;  // Warning - close to rebuild
+      } else if(ti.consecutiveTPSL >= 1) {
+         consecutiveColor = clrOrange;
+      }
+   } else {
+      consecutiveText = "Consecutive TP/SL: DISABLED";
+      consecutiveColor = clrGray;
+   }
+   ObjectSetString(0, "GT_ConsecutiveTPSL", OBJPROP_TEXT, consecutiveText);
+   ObjectSetInteger(0, "GT_ConsecutiveTPSL", OBJPROP_COLOR, consecutiveColor);
+   
+   // NEW: 3-TPSL Rebuild counter
+   string rebuild3Text = "3-TPSL Rebuilds: " + (RebuildAfter3TPSL ? IntegerToString(ti.rebuildsFrom3TPSL) : "DISABLED");
+   ObjectSetString(0, "GT_3TPSLRebuilds", OBJPROP_TEXT, rebuild3Text);
+   color rebuild3Color = RebuildAfter3TPSL ? clrDarkGreen : clrGray;
+   ObjectSetInteger(0, "GT_3TPSLRebuilds", OBJPROP_COLOR, rebuild3Color);
    
    string nextRebuildText = "Next Rebuild: " + FormatTimeRemaining(ti.nextAutoRebuild);
    ObjectSetString(0, "GT_NextRebuild", OBJPROP_TEXT, nextRebuildText);

@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
-//| Torama Capital Strategy EA                                       |
-//| Complete Dashboard with Market Analysis                          |
+//| Torama Breakout Momentum Strategy                                |
+//| Filename: Torama_Breakout_Momentum.mq5                           |
 //+------------------------------------------------------------------+
 #property copyright "Torama Capital"
-#property version   "1.16"
+#property version   "1.18"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -29,11 +29,12 @@ double startingBalance = 0;
 bool tradingAllowed = true;
 
 //--- object names
-string PANEL_BG   = "EA_BG";
-string PANEL_TXT  = "EA_Dashboard";
-string BTN_TOGGLE = "EA_Toggle";
-string BTN_CLOSE  = "EA_CloseAll";
-string BRANDING   = "EA_Branding";
+string PANEL_BG    = "EA_BG";
+string PANEL_TITLE = "EA_Title";
+string PANEL_LINE  = "EA_Line_";
+string BTN_TOGGLE  = "EA_Toggle";
+string BTN_CLOSE   = "EA_CloseAll";
+string BRANDING    = "EA_Branding";
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -66,8 +67,11 @@ void OnDeinit(const int reason)
    if(atrHandle != INVALID_HANDLE) 
       IndicatorRelease(atrHandle);
 
+   // Delete all panel objects
    ObjectDelete(0, PANEL_BG);
-   ObjectDelete(0, PANEL_TXT);
+   ObjectDelete(0, PANEL_TITLE);
+   for(int i = 0; i < 30; i++)
+      ObjectDelete(0, PANEL_LINE + IntegerToString(i));
    ObjectDelete(0, BTN_TOGGLE);
    ObjectDelete(0, BTN_CLOSE);
    ObjectDelete(0, BRANDING);
@@ -260,72 +264,76 @@ string GetMarketDirection()
    double c20 = iClose(_Symbol, PERIOD_CURRENT, 20);
    
    if(c0 > c5 && c5 > c10 && c10 > c20)
-      return "BULLISH ↗";
+      return "BULLISH";
    else if(c0 < c5 && c5 < c10 && c10 < c20)
-      return "BEARISH ↘";
+      return "BEARISH";
    else
-      return "RANGING →";
+      return "RANGING";
+}
+
+//+------------------------------------------------------------------+
+void CreateLabel(string name, int x, int y, string text, color clr, int size = 9)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   }
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, size);
+   ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
 }
 
 //+------------------------------------------------------------------+
 void CreatePanel()
 {
-   // background
+   // Background panel
    if(ObjectFind(0, PANEL_BG) < 0)
    {
       ObjectCreate(0, PANEL_BG, OBJ_RECTANGLE_LABEL, 0, 0, 0);
       ObjectSetInteger(0, PANEL_BG, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, PANEL_BG, OBJPROP_XDISTANCE, 5);
-      ObjectSetInteger(0, PANEL_BG, OBJPROP_YDISTANCE, 20);
-      ObjectSetInteger(0, PANEL_BG, OBJPROP_XSIZE, 400);
-      ObjectSetInteger(0, PANEL_BG, OBJPROP_YSIZE, 380);
-      ObjectSetInteger(0, PANEL_BG, OBJPROP_BGCOLOR, C'20,20,20');
+      ObjectSetInteger(0, PANEL_BG, OBJPROP_XDISTANCE, 10);
+      ObjectSetInteger(0, PANEL_BG, OBJPROP_YDISTANCE, 25);
+      ObjectSetInteger(0, PANEL_BG, OBJPROP_XSIZE, 420);
+      ObjectSetInteger(0, PANEL_BG, OBJPROP_YSIZE, 440);
+      ObjectSetInteger(0, PANEL_BG, OBJPROP_BGCOLOR, clrBlack);
       ObjectSetInteger(0, PANEL_BG, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-      ObjectSetInteger(0, PANEL_BG, OBJPROP_COLOR, clrWhite);
       ObjectSetInteger(0, PANEL_BG, OBJPROP_WIDTH, 2);
+      ObjectSetInteger(0, PANEL_BG, OBJPROP_COLOR, clrCyan);
       ObjectSetInteger(0, PANEL_BG, OBJPROP_BACK, false);
    }
    
-   // text
-   if(ObjectFind(0, PANEL_TXT) < 0)
-   {
-      ObjectCreate(0, PANEL_TXT, OBJ_LABEL, 0, 0, 0);
-      ObjectSetInteger(0, PANEL_TXT, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, PANEL_TXT, OBJPROP_XDISTANCE, 15);
-      ObjectSetInteger(0, PANEL_TXT, OBJPROP_YDISTANCE, 30);
-      ObjectSetInteger(0, PANEL_TXT, OBJPROP_FONTSIZE, 9);
-      ObjectSetString(0, PANEL_TXT, OBJPROP_FONT, "Courier New");
-      ObjectSetInteger(0, PANEL_TXT, OBJPROP_COLOR, clrWhite);
-   }
-   
-   // toggle button
+   // Toggle button
    if(ObjectFind(0, BTN_TOGGLE) < 0)
    {
       ObjectCreate(0, BTN_TOGGLE, OBJ_BUTTON, 0, 0, 0);
       ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_XDISTANCE, 10);
-      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_YDISTANCE, 370);
-      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_XSIZE, 130);
-      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_YSIZE, 25);
-      ObjectSetString(0, BTN_TOGGLE, OBJPROP_TEXT, "⏸ STOP TRADING");
-      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_XDISTANCE, 15);
+      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_YDISTANCE, 430);
+      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_XSIZE, 155);
+      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_YSIZE, 30);
+      ObjectSetString(0, BTN_TOGGLE, OBJPROP_TEXT, "STOP TRADING");
+      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_FONTSIZE, 10);
       ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_COLOR, clrWhite);
-      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_BGCOLOR, clrDarkGreen);
+      ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_BGCOLOR, clrGreen);
    }
    
-   // close-all button
+   // Close all button
    if(ObjectFind(0, BTN_CLOSE) < 0)
    {
       ObjectCreate(0, BTN_CLOSE, OBJ_BUTTON, 0, 0, 0);
       ObjectSetInteger(0, BTN_CLOSE, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_XDISTANCE, 150);
-      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_YDISTANCE, 370);
-      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_XSIZE, 130);
-      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_YSIZE, 25);
-      ObjectSetString(0, BTN_CLOSE, OBJPROP_TEXT, "✕ CLOSE ALL");
-      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_XDISTANCE, 180);
+      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_YDISTANCE, 430);
+      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_XSIZE, 155);
+      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_YSIZE, 30);
+      ObjectSetString(0, BTN_CLOSE, OBJPROP_TEXT, "CLOSE ALL");
+      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_FONTSIZE, 10);
       ObjectSetInteger(0, BTN_CLOSE, OBJPROP_COLOR, clrWhite);
-      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_BGCOLOR, clrDarkRed);
+      ObjectSetInteger(0, BTN_CLOSE, OBJPROP_BGCOLOR, clrRed);
    }
 }
 
@@ -336,118 +344,132 @@ void UpdatePanel()
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double margin = AccountInfoDouble(ACCOUNT_MARGIN);
    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-   double dd = ((startingBalance - equity) / startingBalance) * 100.0;
-   double profit = ((equity - startingBalance) / startingBalance) * 100.0;
+   double dd = 0;
+   double profit = 0;
    
-   // Get ATR data
+   if(startingBalance > 0)
+   {
+      dd = ((startingBalance - equity) / startingBalance) * 100.0;
+      profit = ((equity - startingBalance) / startingBalance) * 100.0;
+   }
+   
+   // Get ATR
    double atr = 0;
    if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0)
       atr = atrBuffer[0];
    
-   // Get price data
+   // Get prices
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double c0 = iClose(_Symbol, PERIOD_CURRENT, 0);
-   double c1 = iClose(_Symbol, PERIOD_CURRENT, 1);
-   double c2 = iClose(_Symbol, PERIOD_CURRENT, 2);
-   double c3 = iClose(_Symbol, PERIOD_CURRENT, 3);
    
    // Get high/low levels
    double high = iHigh(_Symbol, PERIOD_CURRENT, iHighest(_Symbol, PERIOD_CURRENT, MODE_HIGH, xbars, 1));
    double low = iLow(_Symbol, PERIOD_CURRENT, iLowest(_Symbol, PERIOD_CURRENT, MODE_LOW, xbars, 1));
    
-   // Calculate distances
-   double distToLong = high - c0;
-   double distToShort = c0 - low;
+   // Determine colors
+   color mainColor = clrCyan;
+   color borderColor = clrCyan;
    
-   // Check conditions
-   bool longReady = (c0 > c1 && c0 > c3 && c1 > c2);
-   bool shortReady = (c0 < c1 && c0 < c3 && c1 < c2);
+   if(!tradingAllowed)
+   { 
+      mainColor = clrOrange;
+      borderColor = clrOrange;
+   }
+   else if(dd > 0)
+   { 
+      mainColor = clrRed;
+      borderColor = clrRed;
+   }
+   else if(profit > 0)
+   { 
+      mainColor = clrLime;
+      borderColor = clrLime;
+   }
    
-   string posInfo = "═════════════ POSITION ═════════════\n";
+   ObjectSetInteger(0, PANEL_BG, OBJPROP_COLOR, borderColor);
+   
+   int lineY = 35;
+   int lineSpacing = 18;
+   int lineNum = 0;
+   
+   // Title
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "=== TORAMA BREAKOUT MOMENTUM ===", clrYellow, 10);
+   lineY += 20;
+   
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, _Symbol + " | " + GetTimeframeName() + " | " + GetMarketDirection(), mainColor, 9);
+   lineY += lineSpacing + 5;
+   
+   // Account section
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "--- ACCOUNT ---", clrWhite, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Balance:  $" + DoubleToString(balance, 2), mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Equity:   $" + DoubleToString(equity, 2), mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Margin:   $" + DoubleToString(margin, 2), mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Free:     $" + DoubleToString(freeMargin, 2), mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Drawdown: " + DoubleToString(dd, 2) + "% / Max: " + DoubleToString(GlobalMaxDrawdown, 1) + "%", mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Profit:   " + DoubleToString(profit, 2) + "% / Max: " + DoubleToString(GlobalMaxProfit, 1) + "%", mainColor, 9);
+   lineY += lineSpacing + 5;
+   
+   // ATR section
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "--- ATR DATA ---", clrWhite, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "ATR:      " + DoubleToString(atr, _Digits), mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "SL Dist:  " + DoubleToString(atr * ATRmultiplierSL, _Digits) + " (" + DoubleToString((atr*ATRmultiplierSL)/_Point, 0) + " pts)", mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "TP Dist:  " + DoubleToString(atr * ATRmultiplierTP, _Digits) + " (" + DoubleToString((atr*ATRmultiplierTP)/_Point, 0) + " pts)", mainColor, 9);
+   lineY += lineSpacing + 5;
+   
+   // Market section
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "--- MARKET ---", clrWhite, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Bid: " + DoubleToString(bid, _Digits) + " | Ask: " + DoubleToString(ask, _Digits), mainColor, 9);
+   lineY += lineSpacing;
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Spread:   " + DoubleToString((ask-bid)/_Point, 1) + " points", mainColor, 9);
+   lineY += lineSpacing + 5;
+   
+   // Position section
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "--- POSITION ---", clrWhite, 9);
+   lineY += lineSpacing;
+   
    if(PositionSelect(_Symbol))
    {
       long type = PositionGetInteger(POSITION_TYPE);
       double lots = PositionGetDouble(POSITION_VOLUME);
-      double sl = PositionGetDouble(POSITION_SL);
-      double tp = PositionGetDouble(POSITION_TP);
       double pl = PositionGetDouble(POSITION_PROFIT);
       double entry = PositionGetDouble(POSITION_PRICE_OPEN);
       
-      posInfo += "Type:     " + (type == POSITION_TYPE_BUY ? "BUY  ▲" : "SELL ▼") + "\n";
-      posInfo += "Volume:   " + DoubleToString(lots, 2) + " lots\n";
-      posInfo += "Entry:    " + DoubleToString(entry, _Digits) + "\n";
-      posInfo += "SL:       " + DoubleToString(sl, _Digits) + "\n";
-      posInfo += "TP:       " + DoubleToString(tp, _Digits) + "\n";
-      posInfo += "P/L:      " + DoubleToString(pl, 2) + " USD\n";
+      CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, (type == POSITION_TYPE_BUY ? "LONG ACTIVE" : "SHORT ACTIVE"), clrYellow, 9);
+      lineY += lineSpacing;
+      CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Entry: " + DoubleToString(entry, _Digits) + " | Lots: " + DoubleToString(lots, 2), mainColor, 9);
+      lineY += lineSpacing;
+      CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "P/L: $" + DoubleToString(pl, 2), (pl >= 0 ? clrLime : clrRed), 9);
    }
    else
    {
-      posInfo += "Status:   NO ACTIVE POSITION\n";
-      posInfo += "\n";
-      posInfo += "Next Long:  " + DoubleToString(high, _Digits) + " (+" + DoubleToString(distToLong/_Point, 0) + " pts)\n";
-      posInfo += "Next Short: " + DoubleToString(low, _Digits) + " (-" + DoubleToString(distToShort/_Point, 0) + " pts)\n";
-      posInfo += "\n";
-      posInfo += "Long Signal:  " + (longReady ? "✓ READY" : "✗ Waiting") + "\n";
-      posInfo += "Short Signal: " + (shortReady ? "✓ READY" : "✗ Waiting") + "\n";
+      double distToLong = (high - c0) / _Point;
+      double distToShort = (c0 - low) / _Point;
+      
+      CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "NO ACTIVE POSITION", clrGray, 9);
+      lineY += lineSpacing;
+      CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Long Entry:  " + DoubleToString(high, _Digits) + " (+" + DoubleToString(distToLong, 0) + " pts)", mainColor, 9);
+      lineY += lineSpacing;
+      CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Short Entry: " + DoubleToString(low, _Digits) + " (-" + DoubleToString(distToShort, 0) + " pts)", mainColor, 9);
    }
-
-   string text =
-      "╔════ TORAMA CAPITAL EA v1.16 ════╗\n" +
-      "║ " + _Symbol + " | " + GetTimeframeName() + " | " + GetMarketDirection() + "\n" +
-      "╠══════════ ACCOUNT ══════════╣\n" +
-      "Balance:     " + DoubleToString(balance, 2) + " USD\n" +
-      "Equity:      " + DoubleToString(equity, 2) + " USD\n" +
-      "Margin:      " + DoubleToString(margin, 2) + " USD\n" +
-      "Free:        " + DoubleToString(freeMargin, 2) + " USD\n" +
-      "Drawdown:    " + DoubleToString(dd, 2) + "%\n" +
-      "Profit:      " + DoubleToString(profit, 2) + "%\n" +
-      "\n" +
-      "╠═══════════ ATR DATA ═══════════╣\n" +
-      "ATR Value:   " + DoubleToString(atr, _Digits) + "\n" +
-      "SL Distance: " + DoubleToString(atr * ATRmultiplierSL, _Digits) + " (" + DoubleToString((atr*ATRmultiplierSL)/_Point, 0) + " pts)\n" +
-      "TP Distance: " + DoubleToString(atr * ATRmultiplierTP, _Digits) + " (" + DoubleToString((atr*ATRmultiplierTP)/_Point, 0) + " pts)\n" +
-      "\n" +
-      "╠══════════ MARKET ══════════╣\n" +
-      "Bid:         " + DoubleToString(bid, _Digits) + "\n" +
-      "Ask:         " + DoubleToString(ask, _Digits) + "\n" +
-      "Spread:      " + DoubleToString((ask-bid)/_Point, 1) + " pts\n" +
-      "\n" +
-      posInfo +
-      "\n" +
-      "╠════════════ STATUS ════════════╣\n" +
-      "Trading:     " + (tradingAllowed ? "ENABLED ✓" : "DISABLED ✗") + "\n" +
-      "Max DD:      " + DoubleToString(GlobalMaxDrawdown, 1) + "%\n" +
-      "Max Profit:  " + DoubleToString(GlobalMaxProfit, 1) + "%\n" +
-      "╚═══════════════════════════════╝";
-
-   // Color scheme
-   color borderCol = clrWhite;
-   color txtCol = clrWhite;
+   lineY += lineSpacing + 5;
    
-   if(!tradingAllowed)
-   { 
-      borderCol = clrOrange;
-      txtCol = clrOrange;
-   }
-   else if(dd > 0)
-   { 
-      borderCol = clrRed;
-      txtCol = clrRed;
-   }
-   else if(profit > 0)
-   { 
-      borderCol = clrLime;
-      txtCol = clrLime;
-   }
-
-   ObjectSetString(0, PANEL_TXT, OBJPROP_TEXT, text);
-   ObjectSetInteger(0, PANEL_TXT, OBJPROP_COLOR, txtCol);
-   ObjectSetInteger(0, PANEL_BG, OBJPROP_COLOR, borderCol);
-
-   // Update buttons
-   ObjectSetString(0, BTN_TOGGLE, OBJPROP_TEXT, (tradingAllowed ? "⏸ STOP TRADING" : "▶ START TRADING"));
-   ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_BGCOLOR, (tradingAllowed ? clrDarkGreen : clrGray));
+   // Status
+   CreateLabel(PANEL_LINE + IntegerToString(lineNum++), 20, lineY, "Trading: " + (tradingAllowed ? "ENABLED" : "DISABLED"), (tradingAllowed ? clrLime : clrOrange), 10);
+   
+   // Update button
+   ObjectSetString(0, BTN_TOGGLE, OBJPROP_TEXT, (tradingAllowed ? "STOP TRADING" : "START TRADING"));
+   ObjectSetInteger(0, BTN_TOGGLE, OBJPROP_BGCOLOR, (tradingAllowed ? clrGreen : clrGray));
 }
 
 //+------------------------------------------------------------------+
@@ -457,9 +479,9 @@ void CreateBranding()
    {
       ObjectCreate(0, BRANDING, OBJ_LABEL, 0, 0, 0);
       ObjectSetInteger(0, BRANDING, OBJPROP_CORNER, CORNER_RIGHT_LOWER);
-      ObjectSetInteger(0, BRANDING, OBJPROP_XDISTANCE, 10);
-      ObjectSetInteger(0, BRANDING, OBJPROP_YDISTANCE, 10);
-      ObjectSetInteger(0, BRANDING, OBJPROP_FONTSIZE, 9);
+      ObjectSetInteger(0, BRANDING, OBJPROP_XDISTANCE, 15);
+      ObjectSetInteger(0, BRANDING, OBJPROP_YDISTANCE, 15);
+      ObjectSetInteger(0, BRANDING, OBJPROP_FONTSIZE, 10);
       ObjectSetString(0, BRANDING, OBJPROP_FONT, "Arial Bold");
       ObjectSetInteger(0, BRANDING, OBJPROP_COLOR, clrGold);
       ObjectSetString(0, BRANDING, OBJPROP_TEXT, "TORAMA CAPITAL | ea@torama.money");

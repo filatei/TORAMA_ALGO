@@ -1,10 +1,10 @@
 //+------------------------------------------------------------------+
-//|                           Advanced Trend EA v10.04 - COMPLETE   |
-//|              Consecutive Candles TP + Lot Size Compounding       |
+//|                           Advanced Trend EA v10.06 - COMPLETE   |
+//|              Clean Dashboard + Working Reverse Direction         |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Your Company"
-#property version   "10.04"
-#property description "Professional Trend EA - Complete with All Features"
+#property version   "10.06"
+#property description "Professional Trend EA - Optimized for Crypto Trading"
 
 #include <Trade\Trade.mqh>
 CTrade trade;
@@ -22,13 +22,13 @@ input long MaxBuyTrades = 50;
 input long MaxSellTrades = 50;
 
 input group "LOT SIZE COMPOUNDING"
-input bool EnableLotCompounding = true;        // Enable lot size compounding based on equity
-input double LotSizeIncrement = 0.01;          // Lot size increment per equity threshold
-input double EquityThreshold = 500.0;          // Equity amount required for each lot increment
+input bool EnableLotCompounding = true;
+input double LotSizeIncrement = 0.01;
+input double EquityThreshold = 500.0;
 
 input group "CONSECUTIVE CANDLES TP"
-input bool EnableConsecutiveCandlesTP = false;  // Enable consecutive candles take profit
-input int ConsecutiveCandlesCount = 3;          // Number of consecutive candles required
+input bool EnableConsecutiveCandlesTP = false;
+input int ConsecutiveCandlesCount = 3;
 
 input group "S/R SETTINGS"
 input bool EnableSRDetection = true;
@@ -61,7 +61,7 @@ input group "EA SETTINGS"
 input long MagicNumber = 777000;
 input bool EnableSounds = false;
 input bool EnableDashboard = true;
-input long panelHeight = 350; // Increased height for new features
+input long panelHeight = 340;
 
 // Global variables
 datetime lastCandleTime = 0;
@@ -75,6 +75,7 @@ bool shouldBuyAtSupport = false;
 ENUM_TIMEFRAMES WorkingTimeframe = PERIOD_M1;
 bool isCryptoPair = false;
 string symbolType = "";
+ENUM_TRADE_DIRECTION currentTradeDirection = TRADE_BOTH_SIDES;
 
 // S/R levels
 double currentH4Resistance = 0;
@@ -97,7 +98,7 @@ int NewYorkOpenHour = 13, NewYorkCloseHour = 21;
 int OnInit()
 {
     Print("==========================================");
-    Print("Advanced Trend EA v10.04 INITIALIZING...");
+    Print("Advanced Trend EA v10.06 INITIALIZING...");
     Print("==========================================");
     
     DetectSymbolType();
@@ -108,8 +109,9 @@ int OnInit()
     trade.LogLevel(LOG_LEVEL_ERRORS);
     
     WorkingTimeframe = TradingTimeframe;
+    currentTradeDirection = TradeDirection;
     dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-    currentLotSize = CalculateCompoundedLotSize(); // Use compounded lot size calculation
+    currentLotSize = CalculateCompoundedLotSize();
     lastCandleTime = iTime(_Symbol, WorkingTimeframe, 0);
     
     if(!ValidateAllInputs()) return INIT_PARAMETERS_INCORRECT;
@@ -155,6 +157,8 @@ int OnInit()
     } else {
         Print("CONSECUTIVE CANDLES TP: DISABLED");
     }
+    
+    Print("REVERSE DIRECTION BUTTON: ", (currentTradeDirection != TRADE_BOTH_SIDES ? "ACTIVE" : "DISABLED (Both Sides Mode)"));
     Print("==========================================");
     
     return INIT_SUCCEEDED;
@@ -174,16 +178,10 @@ double CalculateCompoundedLotSize()
         return NormalizeLotSize(InitialLotSize);
     }
     
-    // Calculate how many equity thresholds we have
     double equityMultiplier = currentEquity / EquityThreshold;
-    
-    // Calculate compounded lot size
     double compoundedLotSize = equityMultiplier * LotSizeIncrement;
-    
-    // Ensure minimum lot size (use InitialLotSize as minimum)
     compoundedLotSize = MathMax(InitialLotSize, compoundedLotSize);
     
-    // Normalize the lot size according to broker requirements
     return NormalizeLotSize(compoundedLotSize);
 }
 
@@ -195,7 +193,6 @@ bool CheckConsecutiveCandlesTP(ENUM_POSITION_TYPE positionType)
     if(!EnableConsecutiveCandlesTP || ConsecutiveCandlesCount <= 0) 
         return false;
     
-    // Get the required number of completed candles
     double closes[], opens[];
     ArrayResize(closes, ConsecutiveCandlesCount + 1);
     ArrayResize(opens, ConsecutiveCandlesCount + 1);
@@ -205,13 +202,9 @@ bool CheckConsecutiveCandlesTP(ENUM_POSITION_TYPE positionType)
         return false;
     
     int consecutiveCount = 0;
-    
-    // For BUY positions: look for consecutive bullish candles (close > open)
-    // For SELL positions: look for consecutive bearish candles (close < open)
     bool lookingForBullish = (positionType == POSITION_TYPE_BUY);
     bool lookingForBearish = (positionType == POSITION_TYPE_SELL);
     
-    // Check consecutive candles (starting from most recent completed candle)
     for(int i = 0; i < ConsecutiveCandlesCount; i++) {
         bool isBullish = closes[i] > opens[i];
         bool isBearish = closes[i] < opens[i];
@@ -219,7 +212,7 @@ bool CheckConsecutiveCandlesTP(ENUM_POSITION_TYPE positionType)
         if((lookingForBullish && isBullish) || (lookingForBearish && isBearish)) {
             consecutiveCount++;
         } else {
-            break; // Break the consecutive sequence
+            break;
         }
     }
     
@@ -237,7 +230,6 @@ void CheckConsecutiveCandlesTPForAllPositions()
         if(PositionGetSymbol(i) == _Symbol && PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber) {
             double profit = PositionGetDouble(POSITION_PROFIT);
             
-            // Only close positions that are in profit
             if(profit > 0) {
                 ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
                 
@@ -252,11 +244,60 @@ void CheckConsecutiveCandlesTPForAllPositions()
                               " | Lot: ", DoubleToString(lotSize, 3),
                               " | ", ConsecutiveCandlesCount, " ", candleTypeStr, " candles | Profit: $", DoubleToString(profit, 2));
                         
-                        
+                        if(EnableSounds) PlaySound("alert.wav");
                     }
                 }
             }
         }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Reverse Trade Direction Function                                |
+//+------------------------------------------------------------------+
+void ReverseTradeDirection()
+{
+    if(currentTradeDirection == TRADE_BOTH_SIDES) {
+        Print("ERROR: Cannot reverse direction when trading BOTH SIDES");
+        return;
+    }
+    
+    ENUM_TRADE_DIRECTION previousDirection = currentTradeDirection;
+    
+    if(currentTradeDirection == TRADE_BUY_ONLY) {
+        currentTradeDirection = TRADE_SELL_ONLY;
+    }
+    else if(currentTradeDirection == TRADE_SELL_ONLY) {
+        currentTradeDirection = TRADE_BUY_ONLY;
+    }
+    
+    Print("==========================================");
+    Print("TRADE DIRECTION REVERSED BY USER");
+    Print("Previous: ", GetTradeDirectionStringFromEnum(previousDirection));
+    Print("Current: ", GetTradeDirectionStringFromEnum(currentTradeDirection));
+    Print("==========================================");
+    
+    if(EnableSounds) PlaySound("alert2.wav");
+    
+    // Update dashboard to reflect new direction
+    if(EnableDashboard && panelVisible) {
+        UpdateRealTimeDashboard();
+    }
+    
+    // Force chart redraw to update display immediately
+    ChartRedraw(0);
+}
+
+//+------------------------------------------------------------------+
+//| Get Direction String from Enum                                  |
+//+------------------------------------------------------------------+
+string GetTradeDirectionStringFromEnum(ENUM_TRADE_DIRECTION direction)
+{
+    switch(direction) {
+        case TRADE_BUY_ONLY:  return "BUY ONLY";
+        case TRADE_SELL_ONLY: return "SELL ONLY";
+        case TRADE_BOTH_SIDES: return "BOTH SIDES";
+        default: return "UNKNOWN";
     }
 }
 
@@ -327,9 +368,9 @@ void CheckSRTradingConditions()
     
     buyPausedNearResistance = PauseBuyNearResistance && IsNearResistance(currentPrice);
     sellPausedNearSupport = PauseSellNearSupport && IsNearSupport(currentPrice);
-    shouldSellAtResistance = ReverseTradingAtSR && TradeDirection == TRADE_BUY_ONLY && 
+    shouldSellAtResistance = ReverseTradingAtSR && currentTradeDirection == TRADE_BUY_ONLY && 
                             SellAtResistanceInBuyMode && IsNearResistance(currentPrice);
-    shouldBuyAtSupport = ReverseTradingAtSR && TradeDirection == TRADE_SELL_ONLY && 
+    shouldBuyAtSupport = ReverseTradingAtSR && currentTradeDirection == TRADE_SELL_ONLY && 
                         BuyAtSupportInSellMode && IsNearSupport(currentPrice);
 }
 
@@ -404,21 +445,21 @@ void OnDeinit(const int reason)
     EventKillTimer();
     
     string objects[] = {"EA_Panel_Background", "EA_Panel_Header", "EA_Panel_Title", "EA_Toggle_Hint",
-                       "Btn_CloseProfits", "Btn_CloseAll", "Btn_PauseResume", "LondonSession_Line",
-                       "NewYorkSession_Line", "LondonSession_Label", "NewYorkSession_Label",
-                       "H4_Resistance_Line", "H4_Support_Line", "H4_Resistance_Label", "H4_Support_Label",
-                       "H1_Resistance_Line", "H1_Support_Line", "H1_Resistance_Label", "H1_Support_Label"};
+                       "Btn_CloseProfits", "Btn_CloseAll", "Btn_PauseResume", "Btn_ReverseDirection",
+                       "LondonSession_Line", "NewYorkSession_Line", "LondonSession_Label", 
+                       "NewYorkSession_Label", "H4_Resistance_Line", "H4_Support_Line", 
+                       "H4_Resistance_Label", "H4_Support_Label", "H1_Resistance_Line", 
+                       "H1_Support_Line", "H1_Resistance_Label", "H1_Support_Label"};
     
     for(int i = 0; i < ArraySize(objects); i++)
         ObjectDelete(0, objects[i]);
     
-    // Clean dashboard objects
     for(int i = 0; i < 70; i++)
         ObjectDelete(0, "Dashboard_" + IntegerToString(i));
     
     ChartRedraw(0);
     
-    Print("Advanced Trend EA v10.04 DEINITIALIZED");
+    Print("Advanced Trend EA v10.06 DEINITIALIZED");
 }
 
 //+------------------------------------------------------------------+
@@ -442,7 +483,6 @@ void OnTick()
     if(currentCandle != lastCandleTime && currentCandle > 0) {
         lastCandleTime = currentCandle;
         
-        // Update lot size based on current equity if compounding is enabled
         if(EnableLotCompounding) {
             double newLotSize = CalculateCompoundedLotSize();
             if(newLotSize != currentLotSize) {
@@ -455,15 +495,15 @@ void OnTick()
         long buyPositions = CountPositions(POSITION_TYPE_BUY);
         long sellPositions = CountPositions(POSITION_TYPE_SELL);
         
-        bool canOpenBuy = (TradeDirection == TRADE_BUY_ONLY || TradeDirection == TRADE_BOTH_SIDES) && buyPositions < MaxBuyTrades;
-        bool canOpenSell = (TradeDirection == TRADE_SELL_ONLY || TradeDirection == TRADE_BOTH_SIDES) && sellPositions < MaxSellTrades;
+        bool canOpenBuy = (currentTradeDirection == TRADE_BUY_ONLY || currentTradeDirection == TRADE_BOTH_SIDES) && buyPositions < MaxBuyTrades;
+        bool canOpenSell = (currentTradeDirection == TRADE_SELL_ONLY || currentTradeDirection == TRADE_BOTH_SIDES) && sellPositions < MaxSellTrades;
         
         if(canOpenBuy || canOpenSell)
             ExecuteAdvancedTradingLogic();
     }
     
     CheckPercentageBasedTP();
-    CheckConsecutiveCandlesTPForAllPositions(); // Check consecutive candles TP
+    CheckConsecutiveCandlesTPForAllPositions();
     
     if(ShowSessionLines) UpdateSessionLines();
     
@@ -471,7 +511,7 @@ void OnTick()
     if(currentDD >= DrawdownLimit && !tradingPaused) {
         tradingPaused = true;
         Print("DRAWDOWN LIMIT REACHED: ", DoubleToString(currentDD, 2), "% - TRADING PAUSED");
-        
+        if(EnableSounds) PlaySound("alert.wav");
     }
 }
 
@@ -492,16 +532,14 @@ void ExecuteAdvancedTradingLogic()
     bool executeBuy = false;
     bool executeSell = false;
     
-    // Normal trading logic
-    if((TradeDirection == TRADE_BUY_ONLY || TradeDirection == TRADE_BOTH_SIDES) && 
+    if((currentTradeDirection == TRADE_BUY_ONLY || currentTradeDirection == TRADE_BOTH_SIDES) && 
        !buyPausedNearResistance && buyPositions < MaxBuyTrades)
         executeBuy = true;
     
-    if((TradeDirection == TRADE_SELL_ONLY || TradeDirection == TRADE_BOTH_SIDES) && 
+    if((currentTradeDirection == TRADE_SELL_ONLY || currentTradeDirection == TRADE_BOTH_SIDES) && 
        !sellPausedNearSupport && sellPositions < MaxSellTrades)
         executeSell = true;
     
-    // Reverse trading logic
     if(shouldSellAtResistance && sellPositions < MaxSellTrades) {
         executeBuy = false;
         executeSell = true;
@@ -512,12 +550,11 @@ void ExecuteAdvancedTradingLogic()
         executeBuy = true;
     }
     
-    // Execute trades
     if(executeBuy) {
         double buyTP = CalculateTPPrice(true, ask);
         if(buyTP <= ask) buyTP = ask + (isCryptoPair ? CryptoMinMovement : TPPipsBackup * SymbolInfoDouble(_Symbol, SYMBOL_POINT) * 10);
         
-        if(trade.Buy(lotSize, _Symbol, ask, 0, buyTP, "ADV_TRENDEA_v10.04")) {
+        if(trade.Buy(lotSize, _Symbol, ask, 0, buyTP, "ADV_TRENDEA_v10.06")) {
             Print("BUY ORDER PLACED: #", trade.ResultOrder(), 
                   " | Lot: ", DoubleToString(lotSize, 3), 
                   " | Price: ", DoubleToString(ask, _Digits),
@@ -530,7 +567,7 @@ void ExecuteAdvancedTradingLogic()
         double sellTP = CalculateTPPrice(false, bid);
         if(sellTP >= bid) sellTP = bid - (isCryptoPair ? CryptoMinMovement : TPPipsBackup * SymbolInfoDouble(_Symbol, SYMBOL_POINT) * 10);
         
-        if(trade.Sell(lotSize, _Symbol, bid, 0, sellTP, "ADV_TRENDEA_v10.04")) {
+        if(trade.Sell(lotSize, _Symbol, bid, 0, sellTP, "ADV_TRENDEA_v10.06")) {
             Print("SELL ORDER PLACED: #", trade.ResultOrder(), 
                   " | Lot: ", DoubleToString(lotSize, 3), 
                   " | Price: ", DoubleToString(bid, _Digits),
@@ -565,6 +602,10 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
             ObjectSetInteger(0, "Btn_PauseResume", OBJPROP_STATE, false);
             Print("Trading ", tradingPaused ? "PAUSED" : "RESUMED", " by user");
         }
+        else if(sparam == "Btn_ReverseDirection") {
+            ReverseTradeDirection();
+            ObjectSetInteger(0, "Btn_ReverseDirection", OBJPROP_STATE, false);
+        }
         ChartRedraw(0);
     }
 }
@@ -592,7 +633,7 @@ void CreateProfessionalPanel()
 {
     CreateRectLabel("EA_Panel_Background", panelX, panelY, panelWidth, panelHeight, C'20,20,25', C'100,100,120');
     CreateRectLabel("EA_Panel_Header", panelX, panelY, panelWidth, 32, C'0,60,120', C'0,80,160');
-    CreateTextLabel("EA_Panel_Title", panelX + 12, panelY + 7, "TigerTrend v10.04", clrWhite, 11);
+    CreateTextLabel("EA_Panel_Title", panelX + 12, panelY + 7, "TigerTrend v10.06", clrWhite, 11);
     CreateTextLabel("EA_Toggle_Hint", panelX + panelWidth - 110, panelY + 10, "Press H to toggle", clrLightGray, 8);
     
     UpdateRealTimeDashboard();
@@ -605,7 +646,17 @@ void CreateControlButtons()
     CreateButton("Btn_CloseProfits", startX, startY, btnWidth, btnHeight, "Close Profits", clrGreen);
     CreateButton("Btn_PauseResume", startX + btnWidth + 10, startY, btnWidth, btnHeight, 
                 tradingPaused ? "Resume" : "Pause", tradingPaused ? clrBlue : clrOrange);
-    CreateButton("Btn_CloseAll", panelX + 140, panelY + panelHeight - 45, 150, 35, "CLOSE ALL POSITIONS", clrRed);
+    
+    // Bottom buttons side by side
+    long bottomBtnWidth = 130;
+    long bottomBtnY = panelY + panelHeight - 45;
+    
+    if(currentTradeDirection != TRADE_BOTH_SIDES) {
+        CreateButton("Btn_ReverseDirection", panelX + 12, bottomBtnY, bottomBtnWidth, 35, 
+                    "Reverse Dir", clrPurple);
+    }
+    
+    CreateButton("Btn_CloseAll", panelX + 12 + bottomBtnWidth + 10, bottomBtnY, bottomBtnWidth, 35, "Close All", clrRed);
 }
 
 void CreateSessionLines()
@@ -631,10 +682,10 @@ void UpdateRealTimeDashboard()
 {
     if(!panelVisible || !EnableDashboard) return;
     
-    string dashObjects[] = {"Dashboard_Balance_Value", "Dashboard_Equity_Value", "Dashboard_DailyPL", 
+    string dashObjects[] = {"Dashboard_BalanceEquity", "Dashboard_DailyPL", 
                            "Dashboard_TotalPos", "Dashboard_Buy_Count", "Dashboard_Sell_Count",
-                           "Dashboard_TP_Percentage", "Dashboard_TP_Dollar", "Dashboard_Symbol_Type",
-                           "Dashboard_Trade_Direction", "Dashboard_ConsecutiveTP", "Dashboard_ConsecutiveStatus",
+                           "Dashboard_TP_Percentage", "Dashboard_Trade_Direction", 
+                           "Dashboard_ConsecutiveTP", "Dashboard_ConsecutiveStatus",
                            "Dashboard_LotSize", "Dashboard_LotCompounding", "Dashboard_NextLotLevel"};
     
     for(int i = 0; i < ArraySize(dashObjects); i++)
@@ -644,7 +695,6 @@ void UpdateRealTimeDashboard()
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     double dailyPL = equity - dailyStartBalance;
     double tpAmount = CalculateTPAmount();
-    double tpMovement = CalculateTPMovement();
     
     long totalPositions = CountPositions(-1);
     long buyPositions = CountPositions(POSITION_TYPE_BUY);
@@ -653,11 +703,11 @@ void UpdateRealTimeDashboard()
     long leftX = panelX + 18, startY = panelY + 85;
     int spacing = 16, line = 0;
     
-    CreateTextLabel("Dashboard_Balance_Value", leftX, startY + (line++ * spacing), 
-                   "Balance: $" + DoubleToString(balance, 2), clrWhite, 11);
-    CreateTextLabel("Dashboard_Equity_Value", leftX, startY + (line++ * spacing), 
-                   "Equity: $" + DoubleToString(equity, 2), clrYellow, 11);
+    // Combined Balance and Equity on one line
+    CreateTextLabel("Dashboard_BalanceEquity", leftX, startY + (line++ * spacing), 
+                   "Bal: $" + DoubleToString(balance, 2) + " | Eq: $" + DoubleToString(equity, 2), clrWhite, 11);
     line++;
+    
     CreateTextLabel("Dashboard_DailyPL", leftX, startY + (line++ * spacing), 
                    "Daily: " + (dailyPL >= 0 ? "+" : "") + DoubleToString(dailyPL, 2), 
                    dailyPL >= 0 ? clrLime : clrRed, 10);
@@ -669,12 +719,10 @@ void UpdateRealTimeDashboard()
                    "Sell: " + IntegerToString((int)sellPositions) + "/" + IntegerToString((int)MaxSellTrades), clrOrange, 10);
     line++;
     
-    // Trade Direction display
     CreateTextLabel("Dashboard_Trade_Direction", leftX, startY + (line++ * spacing), 
                    "Direction: " + GetTradeDirectionString(), 
                    GetTradeDirectionColor(), 10);
     
-    // Lot Size and Compounding display
     CreateTextLabel("Dashboard_LotSize", leftX, startY + (line++ * spacing), 
                    "Current Lot: " + DoubleToString(currentLotSize, 3), clrYellow, 10);
     
@@ -683,7 +731,6 @@ void UpdateRealTimeDashboard()
                        "Compounding: " + DoubleToString(LotSizeIncrement, 3) + " per $" + DoubleToString(EquityThreshold, 0), 
                        clrLightGreen, 9);
         
-        // Show next lot level
         double nextLotLevel = MathCeil(equity / EquityThreshold) * EquityThreshold;
         if(nextLotLevel > equity) {
             double neededForNextLot = nextLotLevel - equity;
@@ -696,7 +743,6 @@ void UpdateRealTimeDashboard()
                        "Fixed Lot Size", clrGray, 9);
     }
     
-    // Consecutive Candles TP display
     CreateTextLabel("Dashboard_ConsecutiveTP", leftX, startY + (line++ * spacing), 
                    "Candles TP: " + (EnableConsecutiveCandlesTP ? "ON (" + IntegerToString(ConsecutiveCandlesCount) + ")" : "OFF"), 
                    EnableConsecutiveCandlesTP ? clrLightGreen : clrGray, 9);
@@ -709,12 +755,6 @@ void UpdateRealTimeDashboard()
     CreateTextLabel("Dashboard_TP_Percentage", leftX, startY + (line++ * spacing), 
                    "TP: " + DoubleToString(IndividualTradeTP, 1) + "% = $" + DoubleToString(tpAmount, 2), 
                    clrCyan, 9);
-    CreateTextLabel("Dashboard_TP_Dollar", leftX, startY + (line++ * spacing), 
-                   "Movement: " + DoubleToString(tpMovement, isCryptoPair ? 0 : 1) + (isCryptoPair ? " points" : " pips"), 
-                   clrAqua, 9);
-    CreateTextLabel("Dashboard_Symbol_Type", leftX, startY + (line++ * spacing), 
-                   _Symbol + " (" + GetSymbolTypeString() + ")", 
-                   isCryptoPair ? clrGold : clrLightBlue, 9);
     
     ChartRedraw(0);
 }
@@ -723,7 +763,7 @@ void TogglePanelVisibility()
 {
     panelVisible = !panelVisible;
     string objects[] = {"EA_Panel_Background", "EA_Panel_Header", "EA_Panel_Title", "EA_Toggle_Hint",
-                       "Btn_CloseProfits", "Btn_CloseAll", "Btn_PauseResume"};
+                       "Btn_CloseProfits", "Btn_CloseAll", "Btn_PauseResume", "Btn_ReverseDirection"};
     
     for(int i = 0; i < ArraySize(objects); i++)
         ObjectSetInteger(0, objects[i], OBJPROP_TIMEFRAMES, panelVisible ? OBJ_ALL_PERIODS : OBJ_NO_PERIODS);
@@ -815,17 +855,12 @@ string GetSymbolTypeString() { return symbolType; }
 
 string GetTradeDirectionString()
 {
-    switch(TradeDirection) {
-        case TRADE_BUY_ONLY:  return "BUY ONLY";
-        case TRADE_SELL_ONLY: return "SELL ONLY";
-        case TRADE_BOTH_SIDES: return "BOTH SIDES";
-        default: return "UNKNOWN";
-    }
+    return GetTradeDirectionStringFromEnum(currentTradeDirection);
 }
 
 color GetTradeDirectionColor()
 {
-    switch(TradeDirection) {
+    switch(currentTradeDirection) {
         case TRADE_BUY_ONLY:  return clrLime;
         case TRADE_SELL_ONLY: return clrOrange;
         case TRADE_BOTH_SIDES: return clrCyan;
@@ -901,7 +936,7 @@ bool CloseAllProfitablePositions()
     
     if(closedCount > 0) {
         Print("CLOSED ", closedCount, " PROFITABLE POSITIONS | Total Profit: $", DoubleToString(totalProfit, 2));
-        
+        if(EnableSounds) PlaySound("alert.wav");
     }
     
     return closedCount > 0;
@@ -921,7 +956,7 @@ bool CloseAllTrades()
     
     if(closedCount > 0) {
         Print("CLOSED ALL ", closedCount, " POSITIONS | Total P/L: $", DoubleToString(totalProfit, 2));
-        
+        if(EnableSounds) PlaySound("alert.wav");
     }
     
     return closedCount > 0;
@@ -964,7 +999,6 @@ bool ValidateAllInputs()
         return false;
     }
     
-    // Validate consecutive candles parameters
     if(EnableConsecutiveCandlesTP && ConsecutiveCandlesCount <= 0) {
         Print("ERROR: ConsecutiveCandlesCount must be greater than 0 when EnableConsecutiveCandlesTP is true");
         return false;
@@ -974,7 +1008,6 @@ bool ValidateAllInputs()
         Print("WARNING: ConsecutiveCandlesCount > 10 may be too restrictive for most markets");
     }
     
-    // Validate lot compounding parameters
     if(EnableLotCompounding) {
         if(LotSizeIncrement <= 0) {
             Print("ERROR: LotSizeIncrement must be greater than 0 when EnableLotCompounding is true");
