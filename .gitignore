@@ -1,0 +1,11 @@
+# Ignore compiled binaries
+*.ex5
+*.ex4
+
+# Logs and cache
+*.log
+*.dat
+*.tmp
+Tester/*
+Cache/*
+setup.sh
