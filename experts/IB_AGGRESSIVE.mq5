@@ -446,6 +446,7 @@ void OnDeinit(const int reason)
     
     string objects[] = {"EA_Panel_Background", "EA_Panel_Header", "EA_Panel_Title", "EA_Toggle_Hint",
                        "Btn_CloseProfits", "Btn_CloseAll", "Btn_PauseResume", "Btn_ReverseDirection",
+                       "EA_Branding_Company", "EA_Branding_Email",
                        "LondonSession_Line", "NewYorkSession_Line", "LondonSession_Label", 
                        "NewYorkSession_Label", "H4_Resistance_Line", "H4_Support_Line", 
                        "H4_Resistance_Label", "H4_Support_Label", "H1_Resistance_Line", 
@@ -636,6 +637,10 @@ void CreateProfessionalPanel()
     CreateTextLabel("EA_Panel_Title", panelX + 12, panelY + 7, "TigerTrend v10.06", clrWhite, 11);
     CreateTextLabel("EA_Toggle_Hint", panelX + panelWidth - 110, panelY + 10, "Press H to toggle", clrLightGray, 8);
     
+    // Add branding at bottom right
+    CreateTextLabel("EA_Branding_Company", panelX + panelWidth - 145, panelY + panelHeight - 30, "© TORAMA CAPITAL", clrRed, 10);
+    CreateTextLabel("EA_Branding_Email", panelX + panelWidth - 125, panelY + panelHeight - 15, "ea@torama.money", clrWhite, 8);
+    
     UpdateRealTimeDashboard();
 }
 
@@ -682,7 +687,7 @@ void UpdateRealTimeDashboard()
 {
     if(!panelVisible || !EnableDashboard) return;
     
-    string dashObjects[] = {"Dashboard_BalanceEquity", "Dashboard_DailyPL", 
+    string dashObjects[] = {"Dashboard_BalanceEquity", "Dashboard_Margin", "Dashboard_DailyPL", 
                            "Dashboard_TotalPos", "Dashboard_Buy_Count", "Dashboard_Sell_Count",
                            "Dashboard_TP_Percentage", "Dashboard_Trade_Direction", 
                            "Dashboard_ConsecutiveTP", "Dashboard_ConsecutiveStatus",
@@ -693,6 +698,8 @@ void UpdateRealTimeDashboard()
     
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double usedMargin = AccountInfoDouble(ACCOUNT_MARGIN);
+    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
     double dailyPL = equity - dailyStartBalance;
     double tpAmount = CalculateTPAmount();
     
@@ -706,6 +713,13 @@ void UpdateRealTimeDashboard()
     // Combined Balance and Equity on one line
     CreateTextLabel("Dashboard_BalanceEquity", leftX, startY + (line++ * spacing), 
                    "Bal: $" + DoubleToString(balance, 2) + " | Eq: $" + DoubleToString(equity, 2), clrWhite, 11);
+    
+    // Margin line - showing used margin with free margin in parentheses
+    string marginText = "Margin: $" + DoubleToString(usedMargin, 2);
+    if(freeMargin > 0) {
+        marginText = "Margin: $" + DoubleToString(usedMargin, 2) + " | Free: $" + DoubleToString(freeMargin, 2);
+    }
+    CreateTextLabel("Dashboard_Margin", leftX, startY + (line++ * spacing), marginText, clrAqua, 9);
     line++;
     
     CreateTextLabel("Dashboard_DailyPL", leftX, startY + (line++ * spacing), 
@@ -762,11 +776,24 @@ void UpdateRealTimeDashboard()
 void TogglePanelVisibility()
 {
     panelVisible = !panelVisible;
+    
+    // Main panel objects
     string objects[] = {"EA_Panel_Background", "EA_Panel_Header", "EA_Panel_Title", "EA_Toggle_Hint",
-                       "Btn_CloseProfits", "Btn_CloseAll", "Btn_PauseResume", "Btn_ReverseDirection"};
+                       "Btn_CloseProfits", "Btn_CloseAll", "Btn_PauseResume", "Btn_ReverseDirection",
+                       "EA_Branding_Company", "EA_Branding_Email"};
+    
+    // Dashboard text labels
+    string dashObjects[] = {"Dashboard_BalanceEquity", "Dashboard_Margin", "Dashboard_DailyPL", 
+                           "Dashboard_TotalPos", "Dashboard_Buy_Count", "Dashboard_Sell_Count",
+                           "Dashboard_TP_Percentage", "Dashboard_Trade_Direction", 
+                           "Dashboard_ConsecutiveTP", "Dashboard_ConsecutiveStatus",
+                           "Dashboard_LotSize", "Dashboard_LotCompounding", "Dashboard_NextLotLevel"};
     
     for(int i = 0; i < ArraySize(objects); i++)
         ObjectSetInteger(0, objects[i], OBJPROP_TIMEFRAMES, panelVisible ? OBJ_ALL_PERIODS : OBJ_NO_PERIODS);
+    
+    for(int i = 0; i < ArraySize(dashObjects); i++)
+        ObjectSetInteger(0, dashObjects[i], OBJPROP_TIMEFRAMES, panelVisible ? OBJ_ALL_PERIODS : OBJ_NO_PERIODS);
     
     if(panelVisible) UpdateRealTimeDashboard();
     ChartRedraw(0);
