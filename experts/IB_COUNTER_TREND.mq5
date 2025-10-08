@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
-//|                           Enhanced CandlePatternEA v2.25        |
-//|                        Optimized Edition                         |
+//|                           Enhanced CandlePatternEA v2.27        |
+//|                   Optimized Edition with Trend Analysis         |
 //|                        © TORAMA CAPITAL 2025                    |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL - Advanced Trading Solutions"
-#property version   "2.25"
-#property description "Professional Enhanced Candle Pattern EA - Optimized"
+#property version   "2.28"
+#property description "Professional Enhanced Candle Pattern EA - Auto-Pause"
 #property link      "www.toramacapital.com"
 
 #include <Trade/Trade.mqh>
@@ -18,6 +18,9 @@
 #define WARNING_COLOR         C'255,140,0'
 #define VALUE_COLOR           C'255,255,255'
 #define BOLD_VALUE_COLOR      C'255,215,0'
+#define BULLISH_COLOR         C'0,200,100'
+#define BEARISH_COLOR         C'255,80,80'
+#define NEUTRAL_COLOR         C'200,200,0'
 
 enum ENUM_TRADE_DIRECTION { TRADE_BOTH = 0, TRADE_BUY_ONLY = 1, TRADE_SELL_ONLY = 2 };
 
@@ -35,6 +38,8 @@ input bool     EnableConsecutiveCandleExit = true;
 input int      ConsecutiveCandleCount = 3;
 input int      TradesPerSignal = 1;
 input int      MaxPositions = 5;
+input int      DelayBetweenTradesMinutes = 30;
+input int      TPWinsBeforePause = 10;  // Number of TP wins before auto-pause (0 = disabled)
 input int      MagicNumber = 123456;
 input string   TradeComment = "CandleEA";
 input int      MaxRetries = 3;
@@ -43,21 +48,44 @@ input int      RetryDelay = 100;
 // Global Variables
 CTrade trade;
 datetime lastBarTime = 0;
+datetime lastBuyTradeTime = 0;
+datetime lastSellTradeTime = 0;
 int consecutiveBullish = 0, consecutiveBearish = 0;
 bool tradingEnabled = true, isInitialized = false, isUIHidden = false;
 int actualTradesPerSignal = 1;
 
+// NEW: TP Win Tracking
+int tpWinsThisSession = 0;
+int totalPositionsOpened = 0;
+
+// Trend Analysis Variables
+int maShortHandle = INVALID_HANDLE;
+int maMediumHandle = INVALID_HANDLE;
+int maLongHandle = INVALID_HANDLE;
+string shortTrend = "---", mediumTrend = "---", longTrend = "---";
+color shortTrendColor = NEUTRAL_COLOR, mediumTrendColor = NEUTRAL_COLOR, longTrendColor = NEUTRAL_COLOR;
+
 // UI Labels and Values Arrays
 string labelNames[] = {"lblMarginLabel", "lblTimeframeLabel", "lblDailyPLLabel", "lblTotalPLLabel", 
                       "lblBuyPosLabel", "lblSellPosLabel", "lblWinRateLabel", "lblStatusLabel", 
-                      "lblTradeDirectionLabel", "lblSpreadLabel", "lblBullishLabel", "lblBearishLabel"};
+                      "lblTradeDirectionLabel", "lblSpreadLabel", "lblBullishLabel", "lblBearishLabel",
+                      "lblDelayLabel", "lblNextBuyLabel", "lblNextSellLabel",
+                      "lblShortTrendLabel", "lblMediumTrendLabel", "lblLongTrendLabel",
+                      "lblTPWinsLabel"};  // NEW
 string labelTexts[] = {"Margin:", "Timeframe:", "Daily P/L:", "Total P/L:", "Buy Positions:", 
                       "Sell Positions:", "Win Rate:", "Status:", "Trade Direction:", 
-                      "Spread:", "Bullish Candles:", "Bearish Candles:"};
+                      "Spread:", "Bullish Candles:", "Bearish Candles:",
+                      "Trade Delay:", "Next Buy:", "Next Sell:",
+                      "Short Trend:", "Medium Trend:", "Long Trend:",
+                      "TP Wins:"};  // NEW
 string valueNames[] = {"lblMarginValue", "lblTimeframeValue", "lblDailyPLValue", "lblTotalPLValue", 
                       "lblBuyPosValue", "lblSellPosValue", "lblWinRateValue", "lblStatusValue", 
-                      "lblTradeDirectionValue", "lblSpreadValue", "lblBullishValue", "lblBearishValue"};
-bool isBold[] = {true, true, false, false, true, true, false, false, true, false, false, false};
+                      "lblTradeDirectionValue", "lblSpreadValue", "lblBullishValue", "lblBearishValue",
+                      "lblDelayValue", "lblNextBuyValue", "lblNextSellValue",
+                      "lblShortTrendValue", "lblMediumTrendValue", "lblLongTrendValue",
+                      "lblTPWinsValue"};  // NEW
+bool isBold[] = {true, true, false, false, true, true, false, false, true, false, false, false,
+                true, false, false, true, true, true, true};  // NEW
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -66,7 +94,8 @@ int OnInit()
    if(LotSize <= 0 || (UseAutoLotSizing && (AutoLotPer1000 <= 0 || EquityIncrement <= 0)) ||
       TakeProfitDollars < 0 || GlobalProfitTarget <= 0 || 
       (EnableConsecutiveCandleExit && ConsecutiveCandleCount <= 0) ||
-      TradesPerSignal <= 0 || MaxPositions <= 0)
+      TradesPerSignal <= 0 || MaxPositions <= 0 || DelayBetweenTradesMinutes < 0 ||
+      TPWinsBeforePause < 0)
    {
       Print("ERROR: Invalid input parameters");
       return(INIT_PARAMETERS_INCORRECT);
@@ -103,14 +132,34 @@ int OnInit()
       return(INIT_FAILED);
    }
    
+   // Initialize trend indicators (EMA for efficiency)
+   maShortHandle = iMA(_Symbol, PERIOD_CURRENT, 20, 0, MODE_EMA, PRICE_CLOSE);
+   maMediumHandle = iMA(_Symbol, PERIOD_CURRENT, 50, 0, MODE_EMA, PRICE_CLOSE);
+   maLongHandle = iMA(_Symbol, PERIOD_CURRENT, 200, 0, MODE_EMA, PRICE_CLOSE);
+   
+   if(maShortHandle == INVALID_HANDLE || maMediumHandle == INVALID_HANDLE || maLongHandle == INVALID_HANDLE)
+   {
+      Print("ERROR: Failed to initialize trend indicators");
+      return(INIT_FAILED);
+   }
+   
    DeletePanel();
    Sleep(500);
    CountConsecutiveCandles();
+   CalculateTrends();
    CreatePanel();
    isInitialized = true;
    
-   Print("=== TORAMA CAPITAL EA v2.25 OPTIMIZED - ", GetEnumText(TradeDirection, true), 
-         " - TF: ", GetEnumText(Timeframe, false), " ===");
+   // NEW: Track initial open positions
+   totalPositionsOpened = HistoryDealsTotal();
+   
+   string pauseInfo = (TPWinsBeforePause > 0) ? 
+                      (" - Auto-Pause: " + IntegerToString(TPWinsBeforePause) + " TP wins") : 
+                      " - Auto-Pause: OFF";
+   
+   Print("=== TORAMA CAPITAL EA v2.28 with AUTO-PAUSE - ", GetEnumText(TradeDirection, true), 
+         " - TF: ", GetEnumText(Timeframe, false), " - Delay: ", DelayBetweenTradesMinutes, 
+         "min", pauseInfo, " ===");
    
    return(INIT_SUCCEEDED);
 }
@@ -118,6 +167,10 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   if(maShortHandle != INVALID_HANDLE) IndicatorRelease(maShortHandle);
+   if(maMediumHandle != INVALID_HANDLE) IndicatorRelease(maMediumHandle);
+   if(maLongHandle != INVALID_HANDLE) IndicatorRelease(maLongHandle);
+   
    DeletePanel();
    isInitialized = false;
 }
@@ -128,6 +181,8 @@ void OnTick()
    if(!isInitialized) return;
    
    CheckGlobalProfitTarget();
+   CheckTPWins();  // NEW: Check for TP wins and auto-pause
+   
    datetime currentCandle = iTime(_Symbol, Timeframe, 0);
    
    if(currentCandle != lastBarTime && currentCandle > 0)
@@ -152,6 +207,12 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
       else if(sparam == "btnToggleTrading")
       {
          tradingEnabled = !tradingEnabled;
+         // NEW: Reset TP wins counter when manually resuming
+         if(tradingEnabled)
+         {
+            tpWinsThisSession = 0;
+            Print("Trading resumed - TP wins counter reset");
+         }
          ObjectSetInteger(0, "btnToggleTrading", OBJPROP_STATE, false);
          UpdatePanelContent();
       }
@@ -175,11 +236,170 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
 }
 
 //+------------------------------------------------------------------+
+void CalculateTrends()
+{
+   double maShort[], maMedium[], maLong[], close[];
+   
+   if(CopyBuffer(maShortHandle, 0, 0, 3, maShort) < 3 ||
+      CopyBuffer(maMediumHandle, 0, 0, 3, maMedium) < 3 ||
+      CopyBuffer(maLongHandle, 0, 0, 3, maLong) < 3 ||
+      CopyClose(_Symbol, PERIOD_CURRENT, 0, 3, close) < 3)
+      return;
+   
+   ArraySetAsSeries(maShort, true);
+   ArraySetAsSeries(maMedium, true);
+   ArraySetAsSeries(maLong, true);
+   ArraySetAsSeries(close, true);
+   
+   // Short-term trend (20 EMA vs Price + slope)
+   bool shortUp = close[0] > maShort[0] && maShort[0] > maShort[2];
+   bool shortDown = close[0] < maShort[0] && maShort[0] < maShort[2];
+   
+   if(shortUp)
+   {
+      shortTrend = "BULLISH ▲";
+      shortTrendColor = BULLISH_COLOR;
+   }
+   else if(shortDown)
+   {
+      shortTrend = "BEARISH ▼";
+      shortTrendColor = BEARISH_COLOR;
+   }
+   else
+   {
+      shortTrend = "NEUTRAL ●";
+      shortTrendColor = NEUTRAL_COLOR;
+   }
+   
+   // Medium-term trend (20/50 EMA cross + slope)
+   bool mediumUp = maShort[0] > maMedium[0] && maMedium[0] > maMedium[2];
+   bool mediumDown = maShort[0] < maMedium[0] && maMedium[0] < maMedium[2];
+   
+   if(mediumUp)
+   {
+      mediumTrend = "BULLISH ▲";
+      mediumTrendColor = BULLISH_COLOR;
+   }
+   else if(mediumDown)
+   {
+      mediumTrend = "BEARISH ▼";
+      mediumTrendColor = BEARISH_COLOR;
+   }
+   else
+   {
+      mediumTrend = "NEUTRAL ●";
+      mediumTrendColor = NEUTRAL_COLOR;
+   }
+   
+   // Long-term trend (200 EMA position + slope)
+   bool longUp = close[0] > maLong[0] && maLong[0] > maLong[2];
+   bool longDown = close[0] < maLong[0] && maLong[0] < maLong[2];
+   
+   if(longUp)
+   {
+      longTrend = "BULLISH ▲";
+      longTrendColor = BULLISH_COLOR;
+   }
+   else if(longDown)
+   {
+      longTrend = "BEARISH ▼";
+      longTrendColor = BEARISH_COLOR;
+   }
+   else
+   {
+      longTrend = "NEUTRAL ●";
+      longTrendColor = NEUTRAL_COLOR;
+   }
+}
+
+//+------------------------------------------------------------------+
+bool IsDelayPassed(ENUM_POSITION_TYPE posType)
+{
+   if(MaxPositions <= 1) return true;
+   if(DelayBetweenTradesMinutes <= 0) return true;
+   
+   datetime lastTradeTime = (posType == POSITION_TYPE_BUY) ? lastBuyTradeTime : lastSellTradeTime;
+   if(lastTradeTime == 0) return true;
+   
+   int elapsedMinutes = (int)((TimeCurrent() - lastTradeTime) / 60);
+   return (elapsedMinutes >= DelayBetweenTradesMinutes);
+}
+
+//+------------------------------------------------------------------+
+int GetRemainingDelayMinutes(ENUM_POSITION_TYPE posType)
+{
+   if(MaxPositions <= 1 || DelayBetweenTradesMinutes <= 0) return 0;
+   
+   datetime lastTradeTime = (posType == POSITION_TYPE_BUY) ? lastBuyTradeTime : lastSellTradeTime;
+   if(lastTradeTime == 0) return 0;
+   
+   int elapsedMinutes = (int)((TimeCurrent() - lastTradeTime) / 60);
+   int remainingMinutes = DelayBetweenTradesMinutes - elapsedMinutes;
+   
+   return (remainingMinutes > 0) ? remainingMinutes : 0;
+}
+
+//+------------------------------------------------------------------+
+// NEW: Check for TP wins and auto-pause
+void CheckTPWins()
+{
+   if(TPWinsBeforePause <= 0 || !tradingEnabled) return;
+   
+   // Access history from session start
+   if(!HistorySelect(0, TimeCurrent())) return;
+   
+   int tpWins = 0;
+   
+   // Count closed deals that hit TP
+   for(int i = 0; i < HistoryDealsTotal(); i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      // Check if deal belongs to this EA
+      if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol ||
+         HistoryDealGetInteger(ticket, DEAL_MAGIC) != MagicNumber)
+         continue;
+      
+      // Check if it's an exit deal (not entry)
+      if(HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_OUT)
+         continue;
+      
+      // Check if profit is positive (TP hit)
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      if(profit > 0)
+      {
+         // Verify it was a TP exit by checking deal comment or price
+         string comment = HistoryDealGetString(ticket, DEAL_COMMENT);
+         if(StringFind(comment, "tp") >= 0 || StringFind(comment, "TP") >= 0 || 
+            StringFind(comment, "take profit") >= 0)
+         {
+            tpWins++;
+         }
+      }
+   }
+   
+   tpWinsThisSession = tpWins;
+   
+   // Auto-pause when target is reached
+   if(tpWinsThisSession >= TPWinsBeforePause && tradingEnabled)
+   {
+      tradingEnabled = false;
+      string msg = StringFormat("*** AUTO-PAUSED: %d TP wins reached! ***", tpWinsThisSession);
+      Print(msg);
+      Comment(msg);
+      Alert(msg);
+   }
+}
+
+//+------------------------------------------------------------------+
 void OnNewBar()
 {
    Print("=== NEW BAR - ", GetEnumText(TradeDirection, true), " - TF: ", GetEnumText(Timeframe, false), " ===");
    
    CountConsecutiveCandles();
+   CalculateTrends();
+   
    if(!tradingEnabled) return;
    
    // Check entry signals
@@ -193,17 +413,41 @@ void OnNewBar()
    // Process buy signals on bearish candles
    if(isBearish && (TradeDirection == TRADE_BOTH || TradeDirection == TRADE_BUY_ONLY))
    {
-      int currentPos = CountPositions(POSITION_TYPE_BUY);
-      int toOpen = MathMin(actualTradesPerSignal, MaxPositions - currentPos);
-      if(toOpen > 0) OpenMultiplePositions(POSITION_TYPE_BUY, toOpen);
+      if(IsDelayPassed(POSITION_TYPE_BUY))
+      {
+         int currentPos = CountPositions(POSITION_TYPE_BUY);
+         int toOpen = MathMin(actualTradesPerSignal, MaxPositions - currentPos);
+         if(toOpen > 0) 
+         {
+            if(OpenMultiplePositions(POSITION_TYPE_BUY, toOpen))
+               lastBuyTradeTime = TimeCurrent();
+         }
+      }
+      else
+      {
+         int remaining = GetRemainingDelayMinutes(POSITION_TYPE_BUY);
+         Print("BUY signal detected but delay active. ", remaining, " minutes remaining.");
+      }
    }
    
    // Process sell signals on bullish candles
    if(isBullish && (TradeDirection == TRADE_BOTH || TradeDirection == TRADE_SELL_ONLY))
    {
-      int currentPos = CountPositions(POSITION_TYPE_SELL);
-      int toOpen = MathMin(actualTradesPerSignal, MaxPositions - currentPos);
-      if(toOpen > 0) OpenMultiplePositions(POSITION_TYPE_SELL, toOpen);
+      if(IsDelayPassed(POSITION_TYPE_SELL))
+      {
+         int currentPos = CountPositions(POSITION_TYPE_SELL);
+         int toOpen = MathMin(actualTradesPerSignal, MaxPositions - currentPos);
+         if(toOpen > 0) 
+         {
+            if(OpenMultiplePositions(POSITION_TYPE_SELL, toOpen))
+               lastSellTradeTime = TimeCurrent();
+         }
+      }
+      else
+      {
+         int remaining = GetRemainingDelayMinutes(POSITION_TYPE_SELL);
+         Print("SELL signal detected but delay active. ", remaining, " minutes remaining.");
+      }
    }
    
    // Check exit signals
@@ -223,14 +467,14 @@ bool CreatePanel()
    long chartWidth = MathMax(ChartGetInteger(0, CHART_WIDTH_IN_PIXELS), 800);
    long chartHeight = MathMax(ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS), 600);
    
-   int panelWidth = 260, panelHeight = 382, margin = 10;
+   int panelWidth = 260, panelHeight = 424, margin = 10;  // Increased height to cover all content
    
    // Main panel
    CreateObject("mainPanel", OBJ_RECTANGLE_LABEL, margin, margin, panelWidth, panelHeight,
                 PANEL_BG_COLOR, PANEL_BORDER_COLOR);
    
    // Title
-   CreateLabel("panelTitle", margin + 10, margin + 10, "CandlePattern EA v2.25",
+   CreateLabel("panelTitle", margin + 10, margin + 10, "CandlePattern EA v2.28",
                VALUE_COLOR, "Arial Bold", 9);
    
    // Buttons
@@ -243,14 +487,14 @@ bool CreatePanel()
    CreateLabel("lblEqBalLabel", margin + 10, margin + 70, "EQ / BAL:", TEXT_COLOR, "Arial", 8);
    CreateLabel("lblEqBalValue", margin + 70, margin + 70, "", BOLD_VALUE_COLOR, "Arial Bold", 9);
    
-   // Create all other labels and values
+   // Create all other labels and values with adjusted spacing
    for(int i = 0; i < ArraySize(labelNames); i++)
    {
-      CreateLabel(labelNames[i], margin + 10, margin + 92 + (i * 22), labelTexts[i], 
+      CreateLabel(labelNames[i], margin + 10, margin + 92 + (i * 20), labelTexts[i],  // Reduced spacing to 20px
                   TEXT_COLOR, "Arial", 8);
-      CreateLabel(valueNames[i], margin + 140, margin + 92 + (i * 22), "",
+      CreateLabel(valueNames[i], margin + 130, margin + 92 + (i * 20), "",  // Adjusted X position for better fit
                   isBold[i] ? BOLD_VALUE_COLOR : VALUE_COLOR, 
-                  isBold[i] ? "Arial Bold" : "Arial", isBold[i] ? 10 : 8);
+                  isBold[i] ? "Arial Bold" : "Arial", isBold[i] ? 9 : 8);  // Reduced font sizes
    }
    
    // Chart branding
@@ -337,6 +581,9 @@ void UpdatePanelContent()
    ObjectSetString(0, "lblEqBalValue", OBJPROP_TEXT, 
                    FormatNumber(equity, true) + " / " + FormatNumber(balance, true));
    
+   int buyDelayRemaining = GetRemainingDelayMinutes(POSITION_TYPE_BUY);
+   int sellDelayRemaining = GetRemainingDelayMinutes(POSITION_TYPE_SELL);
+   
    // Update all values
    string values[];
    ArrayResize(values, ArraySize(valueNames));
@@ -354,9 +601,31 @@ void UpdatePanelContent()
    values[9] = DoubleToString(spread, 0);
    values[10] = IntegerToString(consecutiveBullish);
    values[11] = IntegerToString(consecutiveBearish);
+   values[12] = IntegerToString(DelayBetweenTradesMinutes) + " min";
+   values[13] = buyDelayRemaining > 0 ? IntegerToString(buyDelayRemaining) + " min" : "Ready";
+   values[14] = sellDelayRemaining > 0 ? IntegerToString(sellDelayRemaining) + " min" : "Ready";
+   values[15] = shortTrend;
+   values[16] = mediumTrend;
+   values[17] = longTrend;
+   values[18] = IntegerToString(tpWinsThisSession) + "/" + IntegerToString(TPWinsBeforePause);  // NEW
    
    for(int i = 0; i < ArraySize(valueNames); i++)
+   {
       ObjectSetString(0, valueNames[i], OBJPROP_TEXT, values[i]);
+      
+      // Update trend colors dynamically
+      if(i == 15) ObjectSetInteger(0, valueNames[i], OBJPROP_COLOR, shortTrendColor);
+      else if(i == 16) ObjectSetInteger(0, valueNames[i], OBJPROP_COLOR, mediumTrendColor);
+      else if(i == 17) ObjectSetInteger(0, valueNames[i], OBJPROP_COLOR, longTrendColor);
+      // NEW: Color code TP wins (warning color when approaching limit)
+      else if(i == 18)
+      {
+         color tpColor = (tpWinsThisSession >= TPWinsBeforePause) ? BEARISH_COLOR :
+                        (tpWinsThisSession >= TPWinsBeforePause - 2) ? WARNING_COLOR : 
+                        BULLISH_COLOR;
+         ObjectSetInteger(0, valueNames[i], OBJPROP_COLOR, tpColor);
+      }
+   }
    
    ChartRedraw();
 }
@@ -403,7 +672,7 @@ void CountConsecutiveCandles()
 }
 
 //+------------------------------------------------------------------+
-void OpenMultiplePositions(ENUM_POSITION_TYPE posType, int count)
+bool OpenMultiplePositions(ENUM_POSITION_TYPE posType, int count)
 {
    bool isBuy = (posType == POSITION_TYPE_BUY);
    int successCount = 0;
@@ -445,6 +714,7 @@ void OpenMultiplePositions(ENUM_POSITION_TYPE posType, int count)
    }
    
    Print("=== SUMMARY: ", successCount, "/", count, " ", isBuy ? "BUY" : "SELL", " positions opened ===");
+   return (successCount > 0);
 }
 
 //+------------------------------------------------------------------+
@@ -595,7 +865,7 @@ string GetEnumText(int value, bool isTradeDirection)
          case TRADE_SELL_ONLY: return "SELL ONLY";
       }
    }
-   else // Timeframe
+   else
    {
       switch(value)
       {
